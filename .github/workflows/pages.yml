@@ -1,0 +1,75 @@
+name: Build and deploy
+
+on:
+  schedule:
+    # UTC. 06:30 and 13:30 in Toulouse in winter, 07:30 and 14:30 in summer.
+    - cron: "30 5,12 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - cine.py
+      - requirements.txt
+      - .github/workflows/pages.yml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Fetch the previous state from the live site
+        run: |
+          mkdir -p site
+          if ! curl -fsSL -o site/cine-state.json "${{ steps.pages.outputs.base_url }}/cine-state.json"; then
+            rm -f site/cine-state.json
+            echo "no previous state; starting from an empty one"
+          fi
+
+      - name: Build the page
+        run: |
+          set +e
+          python3 cine.py -o site/index.html
+          rc=$?
+          set -e
+          if [ "$rc" -eq 1 ]; then
+            echo "::error::no showing at all; nothing deployed"
+            exit 1
+          fi
+          if [ "$rc" -eq 2 ]; then
+            echo "::warning::one cinema site failed; page built from stored data"
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

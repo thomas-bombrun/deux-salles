@@ -1,0 +1,6 @@
+# build outputs
+seances.html
+cine-state.json
+site/
+*.tmp
+__pycache__/
