@@ -1,5 +1,10 @@
 # Deux salles, de cinéma
 
+Available at https://thomas-bombrun.github.io/deux-salles/
+Fully vibe coded.
+
+## Summary
+
 One page with the coming showings at two Toulouse cinemas:
 
 - American Cosmograph: https://www.american-cosmograph.fr/les-horaires.html
