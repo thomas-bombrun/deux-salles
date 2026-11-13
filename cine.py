@@ -611,6 +611,7 @@ JS = """
   var SEEN='cine-seen', FILT='cine-filters';
   var rows=[].slice.call(document.querySelectorAll('.row'));
   var days=[].slice.call(document.querySelectorAll('section.day'));
+  var expiryTimer;
   var cCosmo=document.getElementById('f-cosmo'), cAbc=document.getElementById('f-abc');
   var film=document.getElementById('f-film'), q=document.getElementById('f-q');
   var opts=[].slice.call(film.options);
@@ -631,11 +632,13 @@ JS = """
   function saveSeen(){try{localStorage.setItem(SEEN,JSON.stringify(seen));}catch(e){}}
   function apply(){
     var wantCosmo=cCosmo.checked, wantAbc=cAbc.checked, s=(q.value||'').trim().toLowerCase();
+    var now=Date.now();
     if(film.value&&seen[film.value]) film.value='';
     var f=film.value;
     opts.forEach(function(o){o.hidden=!!(o.value&&seen[o.value]);});
     rows.forEach(function(r){
       var ok=true;
+      if(Number(r.dataset.start)<=now) ok=false;
       if(seen[r.dataset.key]) ok=false;
       if(r.dataset.cinema==='cosmo'&&!wantCosmo) ok=false;
       if(r.dataset.cinema==='abc'&&!wantAbc) ok=false;
@@ -647,7 +650,15 @@ JS = """
       d.hidden=![].some.call(d.querySelectorAll('.row'),function(r){return !r.hidden;});
     });
     document.getElementById('empty').hidden=rows.some(function(r){return !r.hidden;});
+    var countEl=document.getElementById('showing-count');
+    if(countEl) countEl.textContent=String(rows.filter(function(r){return Number(r.dataset.start)>now;}).length);
     try{localStorage.setItem(FILT,JSON.stringify({c:wantCosmo,a:wantAbc,f:f,s:s}));}catch(e){}
+    window.clearTimeout(expiryTimer);
+    var next=rows.reduce(function(soonest,r){
+      var start=Number(r.dataset.start);
+      return start>now&&(!soonest||start<soonest)?start:soonest;
+    },0);
+    if(next) expiryTimer=window.setTimeout(apply,next-now+25);
   }
   function renderSeen(){
     var keys=Object.keys(seen).sort(function(a,b){return String(seen[a].title||a).localeCompare(String(seen[b].title||b),'fr');});
@@ -686,6 +697,8 @@ JS = """
   }catch(e){}
   [cCosmo,cAbc,film].forEach(function(el){el.addEventListener('change',apply);});
   q.addEventListener('input',apply);
+  window.addEventListener('focus',apply);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)apply();});
   loadSeen(); renderSeen(); apply();
 })();
 """
@@ -754,7 +767,7 @@ def render_html(showings: list[Showing], generated: dt.datetime,
     if by_day:
         first, last = min(by_day), max(by_day)
         parts.append(f"<p class=\"sub\">Le Cosmo et l'ABC, à Toulouse · du {e(fmt_day_heading(first))} au {e(fmt_day_heading(last))} · "
-                     f"{len(showings)} séances · mis à jour le {e(fmt_when(generated))}</p>")
+                     f"<span id=\"showing-count\">{len(showings)}</span> séances · mis à jour le {e(fmt_when(generated))}</p>")
     else:
         parts.append(f"<p class=\"sub\">Le Cosmo et l'ABC, à Toulouse · aucune séance à venir · mis à jour le {e(fmt_when(generated))}</p>")
 
@@ -791,7 +804,8 @@ def render_html(showings: list[Showing], generated: dt.datetime,
             pcls = poster_class.get(s.poster_url, "")
             thumb = f"<div class=\"th {pcls}\" role=\"img\" aria-label=\"Affiche\"></div>" if pcls else "<div class=\"th\"></div>"
             parts.append(
-                f"<div class=\"row\" data-cinema=\"{cls}\" data-key=\"{e(key)}\" data-film=\"{e(s.film)}\">"
+                f"<div class=\"row\" data-cinema=\"{cls}\" data-key=\"{e(key)}\" data-film=\"{e(s.film)}\" "
+                f"data-start=\"{int(s.start.timestamp() * 1000)}\">"
                 f"<div class=\"t\">{e(fmt_hm(s.start))}</div>"
                 f"{thumb}"
                 f"<div class=\"f\"><div class=\"name\">{name}</div><div class=\"meta\">{''.join(meta)}</div></div>"
@@ -886,15 +900,19 @@ def main(argv: list[str] | None = None) -> int:
             info["last_error"] = r.errors[-1]
         sources[r.cinema] = info
 
+    now = dt.datetime.now(TZ)
     showings = merge(stored, results, now)
-    dropped = len(stored) - sum(1 for s in stored if s.start >= now)
-    log(f"merge: {len(stored)} stored, {dropped} past, {len(showings)} on the page")
 
     cache = state.get("posters", {})
     if args.no_thumbs:
         thumbs: dict[str, str] = {}
     else:
         thumbs, cache = build_thumbs(showings, cache, log)
+
+    now = dt.datetime.now(TZ)
+    showings = [s for s in showings if s.start >= now]
+    dropped = len(stored) - sum(1 for s in stored if s.start >= now)
+    log(f"merge: {len(stored)} stored, {dropped} past, {len(showings)} on the page")
 
     page = render_html(showings, now, thumbs, sources)
     write_atomic(args.output, page)
